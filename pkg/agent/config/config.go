@@ -487,8 +487,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		nodeConfig.AgentConfig.CNIPlugin = true
 	}
 
-	if controlConfig.ClusterIPRange != nil {
-		nodeConfig.AgentConfig.ClusterCIDR = *controlConfig.ClusterIPRange
+	if controlConfig.ClusterIPRanges != nil {
+		nodeConfig.AgentConfig.ClusterCIDRs = controlConfig.ClusterIPRanges
 	}
 
 	if controlConfig.ServiceIPRange != nil {

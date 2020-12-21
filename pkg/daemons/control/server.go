@@ -96,16 +96,22 @@ func controllerManager(cfg *config.Control, runtime *config.ControlRuntime) erro
 		"kubeconfig":                       runtime.KubeConfigController,
 		"service-account-private-key-file": runtime.ServiceKey,
 		"allocate-node-cidrs":              "true",
-		"cluster-cidr":                     cfg.ClusterIPRange.String(),
-		"root-ca-file":                     runtime.ServerCA,
-		"port":                             "10252",
-		"profiling":                        "false",
-		"address":                          localhostIP.String(),
-		"bind-address":                     localhostIP.String(),
-		"secure-port":                      "0",
-		"use-service-account-credentials":  "true",
-		"cluster-signing-cert-file":        runtime.ClientCA,
-		"cluster-signing-key-file":         runtime.ClientCAKey,
+		"cluster-cidr": func() string {
+			ranges := make([]string, len(cfg.ClusterIPRanges))
+			for i, ips := range cfg.ClusterIPRanges {
+				ranges[i] = ips.String()
+			}
+			return strings.Join(ranges, ",")
+		}(),
+		"root-ca-file":                    runtime.ServerCA,
+		"port":                            "10252",
+		"profiling":                       "false",
+		"address":                         localhostIP.String(),
+		"bind-address":                    localhostIP.String(),
+		"secure-port":                     "0",
+		"use-service-account-credentials": "true",
+		"cluster-signing-cert-file":       runtime.ClientCA,
+		"cluster-signing-key-file":        runtime.ClientCAKey,
 	}
 	if cfg.NoLeaderElect {
 		argsMap["leader-elect"] = "false"
@@ -151,7 +157,13 @@ func apiServer(ctx context.Context, cfg *config.Control, runtime *config.Control
 	argsMap["allow-privileged"] = "true"
 	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
 	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
-	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String()
+	argsMap["service-cluster-ip-range"] = func() string {
+		ranges := make([]string, len(cfg.ServiceIPRanges))
+		for i, ips := range cfg.ServiceIPRanges {
+			ranges[i] = ips.String()
+		}
+		return strings.Join(ranges, ",")
+	}()
 	argsMap["service-node-port-range"] = cfg.ServiceNodePortRange.String()
 	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
 	if cfg.AdvertiseIP != "" {
@@ -195,14 +207,14 @@ func apiServer(ctx context.Context, cfg *config.Control, runtime *config.Control
 }
 
 func defaults(config *config.Control) {
-	if config.ClusterIPRange == nil {
+	if config.ClusterIPRanges == nil {
 		_, clusterIPNet, _ := net.ParseCIDR("10.42.0.0/16")
-		config.ClusterIPRange = clusterIPNet
+		config.ClusterIPRanges = []*net.IPNet{clusterIPNet}
 	}
 
-	if config.ServiceIPRange == nil {
+	if config.ServiceIPRanges == nil {
 		_, serviceIPNet, _ := net.ParseCIDR("10.43.0.0/16")
-		config.ServiceIPRange = serviceIPNet
+		config.ServiceIPRanges = []*net.IPNet{serviceIPNet}
 	}
 
 	if len(config.ClusterDNS) == 0 {
@@ -355,7 +367,13 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control, runtime *c
 
 	s.KubeCloudShared.AllocateNodeCIDRs = true
 	s.KubeCloudShared.CloudProvider.Name = version.Program
-	s.KubeCloudShared.ClusterCIDR = cfg.ClusterIPRange.String()
+	s.KubeCloudShared.ClusterCIDR = func() string {
+		ranges := make([]string, len(cfg.ClusterIPRanges))
+		for i, ips := range cfg.ClusterIPRanges {
+			ranges[i] = ips.String()
+		}
+		return strings.Join(ranges, ",")
+	}()
 	s.KubeCloudShared.ConfigureCloudRoutes = false
 	s.Kubeconfig = runtime.KubeConfigCloudController
 	s.NodeStatusUpdateFrequency = metav1.Duration{Duration: 1 * time.Minute}

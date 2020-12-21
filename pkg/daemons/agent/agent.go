@@ -46,7 +46,13 @@ func startKubeProxy(cfg *config.Agent) error {
 		"proxy-mode":           "iptables",
 		"healthz-bind-address": "127.0.0.1",
 		"kubeconfig":           cfg.KubeConfigKubeProxy,
-		"cluster-cidr":         cfg.ClusterCIDR.String(),
+		"cluster-cidr": func() string {
+			ranges := make([]string, len(cfg.ClusterCIDRs))
+			for i, ips := range cfg.ClusterCIDRs {
+				ranges[i] = ips.String()
+			}
+			return strings.Join(ranges, ",")
+		}(),
 	}
 	if cfg.NodeName != "" {
 		argsMap["hostname-override"] = cfg.NodeName

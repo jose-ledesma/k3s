@@ -60,7 +60,7 @@ type Agent struct {
 	ServingKubeletKey       string
 	ServiceCIDR             net.IPNet
 	ServiceNodePortRange    utilnet.PortRange
-	ClusterCIDR             net.IPNet
+	ClusterCIDRs            []*net.IPNet
 	ClusterDNS              net.IP
 	ClusterDomain           string
 	ResolvConf              string
@@ -105,8 +105,8 @@ type Control struct {
 	APIServerBindAddress     string
 	AgentToken               string `json:"-"`
 	Token                    string `json:"-"`
-	ClusterIPRange           *net.IPNet
-	ServiceIPRange           *net.IPNet
+	ClusterIPRanges          []*net.IPNet
+	ServiceIPRanges          []*net.IPNet
 	ServiceNodePortRange     *utilnet.PortRange
 	ClusterDNS               net.IP
 	ClusterDomain            string

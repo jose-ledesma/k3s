@@ -69,7 +69,7 @@ type Agent struct {
 	KubeConfigKubeProxy     string
 	KubeConfigK3sController string
 	NodeIP                  string
-	NodeExternalIP          string
+	NodeExternalIPs         []string
 	RuntimeSocket           string
 	ListenAddress           string
 	ClientCA                string

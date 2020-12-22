@@ -292,8 +292,8 @@ func updateAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]
 		HostnameLabel:   agentConfig.NodeName,
 	}
 
-	if agentConfig.NodeExternalIP != "" {
-		result[ExternalIPLabel] = agentConfig.NodeExternalIP
+	if len(agentConfig.NodeExternalIPs) > 0 {
+		result[ExternalIPLabel] = strings.Join(agentConfig.NodeExternalIPs, ",")
 	}
 
 	result = labels.Merge(nodeLabels, result)

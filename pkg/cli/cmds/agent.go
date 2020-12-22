@@ -21,7 +21,7 @@ type Agent struct {
 	ResolvConf               string
 	DataDir                  string
 	NodeIP                   string
-	NodeExternalIP           string
+	NodeExternalIPs          []string
 	NodeName                 string
 	PauseImage               string
 	Snapshotter              string
@@ -57,10 +57,9 @@ var (
 		Usage:       "(agent/networking) IP address to advertise for node",
 		Destination: &AgentConfig.NodeIP,
 	}
-	NodeExternalIPFlag = cli.StringFlag{
-		Name:        "node-external-ip",
-		Usage:       "(agent/networking) External IP address to advertise for node",
-		Destination: &AgentConfig.NodeExternalIP,
+	NodeExternalIPFlag = cli.StringSliceFlag{
+		Name:  "node-external-ip",
+		Usage: "(agent/networking) External IP address to advertise for node",
 	}
 	NodeNameFlag = cli.StringFlag{
 		Name:        "node-name",
@@ -191,7 +190,11 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 		Usage:     "Run node agent",
 		UsageText: appName + " agent [OPTIONS]",
 		Before:    SetupDebug(CheckSELinuxFlags),
-		Action:    action,
+		After: func(c *cli.Context) error {
+			AgentConfig.NodeExternalIPs = c.StringSlice("node-external-ip")
+			return nil
+		},
+		Action: action,
 		Flags: []cli.Flag{
 			ConfigFlag,
 			DebugFlag,

@@ -173,8 +173,8 @@ func run(app *cli.Context, cfg *cmds.Server) error {
 	if serverConfig.ControlConfig.PrivateIP == "" && cmds.AgentConfig.NodeIP != "" {
 		serverConfig.ControlConfig.PrivateIP = cmds.AgentConfig.NodeIP
 	}
-	if serverConfig.ControlConfig.AdvertiseIP == "" && cmds.AgentConfig.NodeExternalIP != "" {
-		serverConfig.ControlConfig.AdvertiseIP = cmds.AgentConfig.NodeExternalIP
+	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeExternalIPs) != 0 {
+		serverConfig.ControlConfig.AdvertiseIP = cmds.AgentConfig.NodeExternalIPs[0]
 	}
 	if serverConfig.ControlConfig.AdvertiseIP == "" && cmds.AgentConfig.NodeIP != "" {
 		serverConfig.ControlConfig.AdvertiseIP = cmds.AgentConfig.NodeIP

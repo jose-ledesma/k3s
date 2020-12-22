@@ -103,6 +103,13 @@ func controllerManager(cfg *config.Control, runtime *config.ControlRuntime) erro
 			}
 			return strings.Join(ranges, ",")
 		}(),
+		"service-cluster-ip-range": func() string {
+			ranges := make([]string, len(cfg.ServiceIPRanges))
+			for i, ips := range cfg.ServiceIPRanges {
+				ranges[i] = ips.String()
+			}
+			return strings.Join(ranges, ",")
+		}(),
 		"root-ca-file":                    runtime.ServerCA,
 		"port":                            "10252",
 		"profiling":                       "false",

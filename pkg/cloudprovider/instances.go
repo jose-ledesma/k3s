@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	InternalIPLabel = version.Program + ".io/internal-ip"
-	ExternalIPLabel = version.Program + ".io/external-ip"
-	HostnameLabel   = version.Program + ".io/hostname"
+	InternalIPAnnotation = version.Program + ".io/internal-ip"
+	ExternalIPAnnotation = version.Program + ".io/external-ip"
+	HostnameLabel        = version.Program + ".io/hostname"
 )
 
 func (k *k3s) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
@@ -70,8 +70,8 @@ func (k *k3s) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.
 		return nil, fmt.Errorf("Failed to find node %s: %v", name, err)
 	}
 	// check internal address
-	if node.Labels[InternalIPLabel] != "" {
-		for _, address := range strings.Split(node.Labels[InternalIPLabel], ",") {
+	if node.Annotations[InternalIPAnnotation] != "" {
+		for _, address := range strings.Split(node.Annotations[InternalIPAnnotation], ",") {
 			addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: address})
 		}
 	} else {
@@ -79,8 +79,8 @@ func (k *k3s) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.
 	}
 
 	// check external address
-	if node.Labels[ExternalIPLabel] != "" {
-		for _, address := range strings.Split(node.Labels[ExternalIPLabel], ",") {
+	if node.Annotations[ExternalIPAnnotation] != "" {
+		for _, address := range strings.Split(node.Annotations[ExternalIPAnnotation], ",") {
 			addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: address})
 		}
 	}

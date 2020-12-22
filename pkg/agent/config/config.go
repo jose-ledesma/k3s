@@ -64,7 +64,7 @@ func Request(path string, info *clientaccess.Info, requester HTTPRequester) ([]b
 	return requester(u.String(), clientaccess.GetHTTPClient(info.CACerts), info.Username, info.Password)
 }
 
-func getNodeNamedCrt(nodeName, nodeIP, nodePasswordFile string) HTTPRequester {
+func getNodeNamedCrt(nodeName string, nodeIPs []string, nodePasswordFile string) HTTPRequester {
 	return func(u string, client *http.Client, username, password string) ([]byte, error) {
 		req, err := http.NewRequest(http.MethodGet, u, nil)
 		if err != nil {
@@ -81,7 +81,7 @@ func getNodeNamedCrt(nodeName, nodeIP, nodePasswordFile string) HTTPRequester {
 			return nil, err
 		}
 		req.Header.Set(version.Program+"-Node-Password", nodePassword)
-		req.Header.Set(version.Program+"-Node-IP", nodeIP)
+		req.Header.Set(version.Program+"-Node-IP", nodeIPs[0])
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -144,8 +144,8 @@ func upgradeOldNodePasswordPath(oldNodePasswordFile, newNodePasswordFile string)
 	}
 }
 
-func getServingCert(nodeName, nodeIP, servingCertFile, servingKeyFile, nodePasswordFile string, info *clientaccess.Info) (*tls.Certificate, error) {
-	servingCert, err := Request("/v1-"+version.Program+"/serving-kubelet.crt", info, getNodeNamedCrt(nodeName, nodeIP, nodePasswordFile))
+func getServingCert(nodeName string, nodeIPs []string, servingCertFile, servingKeyFile, nodePasswordFile string, info *clientaccess.Info) (*tls.Certificate, error) {
+	servingCert, err := Request("/v1-"+version.Program+"/serving-kubelet.crt", info, getNodeNamedCrt(nodeName, nodeIPs, nodePasswordFile))
 	if err != nil {
 		return nil, err
 	}
@@ -207,9 +207,9 @@ func splitCertKeyPEM(bytes []byte) (certPem []byte, keyPem []byte) {
 	return
 }
 
-func getNodeNamedHostFile(filename, keyFile, nodeName, nodeIP, nodePasswordFile string, info *clientaccess.Info) error {
+func getNodeNamedHostFile(filename, keyFile, nodeName string, nodeIPs []string, nodePasswordFile string, info *clientaccess.Info) error {
 	basename := filepath.Base(filename)
-	fileBytes, err := Request("/v1-"+version.Program+"/"+basename, info, getNodeNamedCrt(nodeName, nodeIP, nodePasswordFile))
+	fileBytes, err := Request("/v1-"+version.Program+"/"+basename, info, getNodeNamedCrt(nodeName, nodeIPs, nodePasswordFile))
 	if err != nil {
 		return err
 	}
@@ -224,21 +224,21 @@ func getNodeNamedHostFile(filename, keyFile, nodeName, nodeIP, nodePasswordFile 
 	return nil
 }
 
-func getHostnameAndIP(info cmds.Agent) (string, string, error) {
-	ip := info.NodeIP
-	if ip == "" {
+func getHostnameAndIP(info cmds.Agent) (string, []string, error) {
+	ip := info.NodeIPs
+	if len(ip) == 0 {
 		hostIP, err := net.ChooseHostInterface()
 		if err != nil {
-			return "", "", err
+			return "", []string{}, err
 		}
-		ip = hostIP.String()
+		ip = []string{hostIP.String()}
 	}
 
 	name := info.NodeName
 	if name == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			return "", "", err
+			return "", []string{}, err
 		}
 		name = hostname
 	}
@@ -349,7 +349,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	newNodePasswordFile := filepath.Join(nodeConfigPath, "password")
 	upgradeOldNodePasswordPath(oldNodePasswordFile, newNodePasswordFile)
 
-	nodeName, nodeIP, err := getHostnameAndIP(*envInfo)
+	nodeName, nodeIPs, err := getHostnameAndIP(*envInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -364,14 +364,14 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 
 	os.Setenv("NODE_NAME", nodeName)
 
-	servingCert, err := getServingCert(nodeName, nodeIP, servingKubeletCert, servingKubeletKey, newNodePasswordFile, info)
+	servingCert, err := getServingCert(nodeName, nodeIPs, servingKubeletCert, servingKubeletKey, newNodePasswordFile, info)
 	if err != nil {
 		return nil, err
 	}
 
 	clientKubeletCert := filepath.Join(envInfo.DataDir, "agent", "client-kubelet.crt")
 	clientKubeletKey := filepath.Join(envInfo.DataDir, "agent", "client-kubelet.key")
-	if err := getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, newNodePasswordFile, info); err != nil {
+	if err := getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIPs, newNodePasswordFile, info); err != nil {
 		return nil, err
 	}
 
@@ -411,7 +411,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	}
 	nodeConfig.FlannelIface = flannelIface
 	nodeConfig.Images = filepath.Join(envInfo.DataDir, "agent", "images")
-	nodeConfig.AgentConfig.NodeIP = nodeIP
+	nodeConfig.AgentConfig.NodeIPs = nodeIPs
 	nodeConfig.AgentConfig.NodeName = nodeName
 	nodeConfig.AgentConfig.NodeConfigPath = nodeConfigPath
 	nodeConfig.AgentConfig.NodeExternalIPs = envInfo.NodeExternalIPs

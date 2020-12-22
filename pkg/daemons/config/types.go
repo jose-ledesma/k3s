@@ -68,7 +68,7 @@ type Agent struct {
 	KubeConfigKubelet       string
 	KubeConfigKubeProxy     string
 	KubeConfigK3sController string
-	NodeIP                  string
+	NodeIPs                 []string
 	NodeExternalIPs         []string
 	RuntimeSocket           string
 	ListenAddress           string

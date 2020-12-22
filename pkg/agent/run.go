@@ -288,7 +288,7 @@ func updateMutableLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]
 
 func updateAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]string) (map[string]string, bool) {
 	result := map[string]string{
-		InternalIPLabel: agentConfig.NodeIP,
+		InternalIPLabel: strings.Join(agentConfig.NodeIPs, ","),
 		HostnameLabel:   agentConfig.NodeName,
 	}
 

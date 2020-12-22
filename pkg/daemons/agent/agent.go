@@ -131,8 +131,8 @@ func startKubelet(cfg *config.Agent) error {
 		argsMap["hostname-override"] = cfg.NodeName
 	}
 	defaultIP, err := net.ChooseHostInterface()
-	if err != nil || defaultIP.String() != cfg.NodeIP {
-		argsMap["node-ip"] = cfg.NodeIP
+	if err != nil || defaultIP.String() != cfg.NodeIPs[0] {
+		argsMap["node-ip"] = cfg.NodeIPs[0]
 	}
 	kubeletRoot, runtimeRoot, hasCFS, hasPIDs := checkCgroups()
 	if !hasCFS {

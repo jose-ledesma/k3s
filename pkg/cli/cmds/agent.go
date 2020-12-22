@@ -20,7 +20,7 @@ type Agent struct {
 	LBServerPort             int
 	ResolvConf               string
 	DataDir                  string
-	NodeIP                   string
+	NodeIPs                  []string
 	NodeExternalIPs          []string
 	NodeName                 string
 	PauseImage               string
@@ -52,10 +52,9 @@ type AgentShared struct {
 var (
 	appName     = filepath.Base(os.Args[0])
 	AgentConfig Agent
-	NodeIPFlag  = cli.StringFlag{
-		Name:        "node-ip,i",
-		Usage:       "(agent/networking) IP address to advertise for node",
-		Destination: &AgentConfig.NodeIP,
+	NodeIPFlag  = cli.StringSliceFlag{
+		Name:  "node-ip,i",
+		Usage: "(agent/networking) IP address to advertise for node",
 	}
 	NodeExternalIPFlag = cli.StringSliceFlag{
 		Name:  "node-external-ip",
@@ -192,6 +191,8 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 		Before:    SetupDebug(CheckSELinuxFlags),
 		After: func(c *cli.Context) error {
 			AgentConfig.NodeExternalIPs = c.StringSlice("node-external-ip")
+			AgentConfig.NodeIPs = c.StringSlice("node-ip")
+
 			return nil
 		},
 		Action: action,

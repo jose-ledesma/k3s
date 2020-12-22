@@ -16,7 +16,7 @@ import (
 var (
 	InternalIPAnnotation = version.Program + ".io/internal-ip"
 	ExternalIPAnnotation = version.Program + ".io/external-ip"
-	HostnameLabel        = version.Program + ".io/hostname"
+	HostnameAnnotation   = version.Program + ".io/hostname"
 )
 
 func (k *k3s) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
@@ -86,8 +86,8 @@ func (k *k3s) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.
 	}
 
 	// check hostname
-	if node.Labels[HostnameLabel] != "" {
-		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: node.Labels[HostnameLabel]})
+	if node.Annotations[HostnameAnnotation] != "" {
+		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: node.Annotations[HostnameAnnotation]})
 	} else {
 		logrus.Infof("Couldn't find node hostname label on node %s", name)
 	}

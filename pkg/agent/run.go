@@ -41,7 +41,7 @@ import (
 var (
 	InternalIPAnnotation = version.Program + ".io/internal-ip"
 	ExternalIPAnnotation = version.Program + ".io/external-ip"
-	HostnameLabel        = version.Program + ".io/hostname"
+	HostnameAnnotation   = version.Program + ".io/hostname"
 )
 
 const (
@@ -257,6 +257,7 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes v
 				}
 			}
 			logrus.Infof("annotations and labels have been set successfully on node: %s", agentConfig.NodeName)
+			logrus.Infof("new annotations: %v", node.Annotations)
 		} else {
 			logrus.Infof("annotations and labels have already set on node: %s", agentConfig.NodeName)
 		}
@@ -288,7 +289,7 @@ func updateMutableLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]
 func updateAddressAnnotations(agentConfig *daemonconfig.Agent, nodeAnnotations map[string]string) (map[string]string, bool) {
 	result := map[string]string{
 		InternalIPAnnotation: strings.Join(agentConfig.NodeIPs, ","),
-		HostnameLabel:        agentConfig.NodeName,
+		HostnameAnnotation:   agentConfig.NodeName,
 	}
 
 	if len(agentConfig.NodeExternalIPs) > 0 {

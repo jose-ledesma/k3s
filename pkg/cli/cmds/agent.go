@@ -188,12 +188,10 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 		Name:      "agent",
 		Usage:     "Run node agent",
 		UsageText: appName + " agent [OPTIONS]",
-		Before:    SetupDebug(CheckSELinuxFlags),
-		After: func(c *cli.Context) error {
+		Before: func(c *cli.Context) error {
 			AgentConfig.NodeExternalIPs = c.StringSlice("node-external-ip")
 			AgentConfig.NodeIPs = c.StringSlice("node-ip")
-
-			return nil
+			return SetupDebug(CheckSELinuxFlags)(c)
 		},
 		Action: action,
 		Flags: []cli.Flag{

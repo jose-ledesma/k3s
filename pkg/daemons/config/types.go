@@ -52,15 +52,17 @@ type Containerd struct {
 	SELinux  bool
 }
 
+type NetIPNets []*net.IPNet
+
 type Agent struct {
 	PodManifests            string
 	NodeName                string
 	NodeConfigPath          string
 	ServingKubeletCert      string
 	ServingKubeletKey       string
-	ServiceCIDR             net.IPNet
+	ServiceCIDRs            NetIPNets
 	ServiceNodePortRange    utilnet.PortRange
-	ClusterCIDRs            []*net.IPNet
+	ClusterCIDRs            NetIPNets
 	ClusterDNS              net.IP
 	ClusterDomain           string
 	ResolvConf              string
@@ -105,8 +107,8 @@ type Control struct {
 	APIServerBindAddress     string
 	AgentToken               string `json:"-"`
 	Token                    string `json:"-"`
-	ClusterIPRanges          []*net.IPNet
-	ServiceIPRanges          []*net.IPNet
+	ClusterIPRanges          NetIPNets
+	ServiceIPRanges          NetIPNets
 	ServiceNodePortRange     *utilnet.PortRange
 	ClusterDNS               net.IP
 	ClusterDomain            string
@@ -262,4 +264,12 @@ func GetArgsList(argsMap map[string]string, extraArgs []string) []string {
 	}
 	sort.Strings(args)
 	return args
+}
+
+func (ipNets NetIPNets) String() string {
+	ranges := make([]string, len(ipNets))
+	for i, nets := range ipNets {
+		ranges[i] = nets.String()
+	}
+	return strings.Join(ranges, ",")
 }

@@ -491,8 +491,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		nodeConfig.AgentConfig.ClusterCIDRs = controlConfig.ClusterIPRanges
 	}
 
-	if controlConfig.ServiceIPRange != nil {
-		nodeConfig.AgentConfig.ServiceCIDR = *controlConfig.ServiceIPRange
+	if controlConfig.ServiceIPRanges != nil {
+		nodeConfig.AgentConfig.ServiceCIDRs = controlConfig.ServiceIPRanges
 	}
 
 	if controlConfig.ServiceNodePortRange != nil {
@@ -502,7 +502,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	// Old versions of the server do not send enough information to correctly start the NPC. Users
 	// need to upgrade the server to at least the same version as the agent, or disable the NPC
 	// cluster-wide.
-	if controlConfig.DisableNPC == false && (controlConfig.ServiceIPRange == nil || controlConfig.ServiceNodePortRange == nil) {
+	if controlConfig.DisableNPC == false && (controlConfig.ServiceIPRanges[0] == nil || controlConfig.ServiceNodePortRange == nil) {
 		return nil, fmt.Errorf("incompatible down-level server detected; servers must be upgraded to at least %s, or restarted with --disable-network-policy", version.Version)
 	}
 

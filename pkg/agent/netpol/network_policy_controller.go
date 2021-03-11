@@ -51,7 +51,7 @@ const (
 type NetworkPolicyController struct {
 	nodeIP                  net.IP
 	nodeHostName            string
-	serviceClusterIPRange   net.IPNet
+	serviceClusterIPRanges  []*net.IPNet
 	serviceExternalIPRanges []net.IPNet
 	serviceNodePortRange    string
 	mu                      sync.Mutex

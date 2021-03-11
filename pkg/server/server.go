@@ -424,21 +424,8 @@ func setNoProxyEnv(config *config.Control) error {
 	envList = append(envList,
 		".svc",
 		"."+config.ClusterDomain,
-
-		func() string {
-			ranges := make([]string, len(config.ClusterIPRanges))
-			for i, ips := range config.ClusterIPRanges {
-				ranges[i] = ips.String()
-			}
-			return strings.Join(ranges, ",")
-		}(),
-		func() string {
-			ranges := make([]string, len(config.ServiceIPRanges))
-			for i, ips := range config.ServiceIPRanges {
-				ranges[i] = ips.String()
-			}
-			return strings.Join(ranges, ",")
-		}(),
+		config.ClusterIPRanges.String(),
+		config.ServiceIPRanges.String(),
 	)
 	os.Unsetenv("no_proxy")
 	return os.Setenv("NO_PROXY", strings.Join(envList, ","))

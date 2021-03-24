@@ -5,11 +5,14 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/google/tcpproxy"
 	"github.com/rancher/k3s/pkg/version"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 type LoadBalancer struct {
@@ -26,15 +29,20 @@ type LoadBalancer struct {
 	randomServers         []string
 	currentServerAddress  string
 	nextServerIndex       int
+	Listener              net.Listener
 }
+
+const RandomPort = 0
 
 var (
 	SupervisorServiceName = version.Program + "-agent-load-balancer"
 	APIServerServiceName  = version.Program + "-api-server-agent-load-balancer"
+	ETCDServerServiceName = version.Program + "-etcd-server-load-balancer"
 )
 
-func New(dataDir, serviceName, serverURL string) (_lb *LoadBalancer, _err error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func New(ctx context.Context, dataDir, serviceName, serverURL string, lbServerPort int) (_lb *LoadBalancer, _err error) {
+	config := net.ListenConfig{Control: reusePort}
+	listener, err := config.Listen(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(lbServerPort))
 	defer func() {
 		if _err != nil {
 			logrus.Warnf("Error starting load balancer: %s", _err)
@@ -51,6 +59,11 @@ func New(dataDir, serviceName, serverURL string) (_lb *LoadBalancer, _err error)
 	originalServerAddress, localServerURL, err := parseURL(serverURL, localAddress)
 	if err != nil {
 		return nil, err
+	}
+
+	if serverURL == localServerURL {
+		logrus.Debugf("Initial server URL for load balancer points at local server URL - starting with empty original server address")
+		originalServerAddress = ""
 	}
 
 	lb := &LoadBalancer{
@@ -142,4 +155,10 @@ func (lb *LoadBalancer) dialContext(ctx context.Context, network, address string
 func onDialError(src net.Conn, dstDialErr error) {
 	logrus.Debugf("Incoming conn %v, error dialing load balancer servers: %v", src.RemoteAddr().String(), dstDialErr)
 	src.Close()
+}
+
+func reusePort(network, address string, conn syscall.RawConn) error {
+	return conn.Control(func(descriptor uintptr) {
+		syscall.SetsockoptInt(int(descriptor), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+	})
 }

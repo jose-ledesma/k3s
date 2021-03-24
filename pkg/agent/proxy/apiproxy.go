@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	sysnet "net"
 	"net/url"
 	"strconv"
@@ -13,23 +14,32 @@ import (
 
 type Proxy interface {
 	Update(addresses []string)
-	StartAPIServerProxy(port int) error
+	SetAPIServerPort(ctx context.Context, port int) error
 	SupervisorURL() string
 	SupervisorAddresses() []string
 	APIServerURL() string
+	IsAPIServerLBEnabled() bool
 }
 
-func NewAPIProxy(enabled bool, dataDir, supervisorURL string) (Proxy, error) {
-	p := &proxy{
-		lbEnabled:            enabled,
+// NewSupervisorProxy sets up a new proxy for retrieving supervisor and apiserver addresses.  If
+// lbEnabled is true, a load-balancer is started on the requested port to connect to the supervisor
+// address, and the address of this local load-balancer is returned instead of the actual supervisor
+// and apiserver addresses.
+// NOTE: This is a proxy in the API sense - it returns either actual server URLs, or the URL of the
+// local load-balancer. It is not actually responsible for proxying requests at the network level;
+// this is handled by the load-balancers that the proxy optionally steers connections towards.
+func NewSupervisorProxy(ctx context.Context, lbEnabled bool, dataDir, supervisorURL string, lbServerPort int) (Proxy, error) {
+	p := proxy{
+		lbEnabled:            lbEnabled,
 		dataDir:              dataDir,
 		initialSupervisorURL: supervisorURL,
 		supervisorURL:        supervisorURL,
 		apiServerURL:         supervisorURL,
+		lbServerPort:         lbServerPort,
 	}
 
-	if enabled {
-		lb, err := loadbalancer.New(dataDir, loadbalancer.SupervisorServiceName, supervisorURL)
+	if lbEnabled {
+		lb, err := loadbalancer.New(ctx, dataDir, loadbalancer.SupervisorServiceName, supervisorURL, p.lbServerPort)
 		if err != nil {
 			return nil, err
 		}
@@ -45,23 +55,24 @@ func NewAPIProxy(enabled bool, dataDir, supervisorURL string) (Proxy, error) {
 	p.fallbackSupervisorAddress = u.Host
 	p.supervisorPort = u.Port()
 
-	return p, nil
+	return &p, nil
 }
 
 type proxy struct {
-	dataDir   string
-	lbEnabled bool
+	dataDir          string
+	lbEnabled        bool
+	lbServerPort     int
+	apiServerEnabled bool
 
-	initialSupervisorURL      string
+	apiServerURL              string
 	supervisorURL             string
 	supervisorPort            string
+	initialSupervisorURL      string
 	fallbackSupervisorAddress string
 	supervisorAddresses       []string
-	supervisorLB              *loadbalancer.LoadBalancer
 
-	apiServerURL     string
-	apiServerLB      *loadbalancer.LoadBalancer
-	apiServerEnabled bool
+	apiServerLB  *loadbalancer.LoadBalancer
+	supervisorLB *loadbalancer.LoadBalancer
 }
 
 func (p *proxy) Update(addresses []string) {
@@ -71,14 +82,12 @@ func (p *proxy) Update(addresses []string) {
 	if p.apiServerEnabled {
 		supervisorAddresses = p.setSupervisorPort(supervisorAddresses)
 	}
-
 	if p.apiServerLB != nil {
 		p.apiServerLB.Update(apiServerAddresses)
 	}
 	if p.supervisorLB != nil {
 		p.supervisorLB.Update(supervisorAddresses)
 	}
-
 	p.supervisorAddresses = supervisorAddresses
 }
 
@@ -95,7 +104,12 @@ func (p *proxy) setSupervisorPort(addresses []string) []string {
 	return newAddresses
 }
 
-func (p *proxy) StartAPIServerProxy(port int) error {
+// SetAPIServerPort configures the proxy to return a different set of addresses for the apiserver,
+// for use in cases where the apiserver is not running on the same port as the supervisor. If
+// load-balancing is enabled, another load-balancer is started on a port one below the supervisor
+// load-balancer, and the address of this load-balancer is returned instead of the actual apiserver
+// addresses.
+func (p *proxy) SetAPIServerPort(ctx context.Context, port int) error {
 	u, err := url.Parse(p.initialSupervisorURL)
 	if err != nil {
 		return errors.Wrapf(err, "failed to parse server URL %s", p.initialSupervisorURL)
@@ -105,8 +119,12 @@ func (p *proxy) StartAPIServerProxy(port int) error {
 	p.apiServerURL = u.String()
 	p.apiServerEnabled = true
 
-	if p.lbEnabled {
-		lb, err := loadbalancer.New(p.dataDir, loadbalancer.APIServerServiceName, p.apiServerURL)
+	if p.lbEnabled && p.apiServerLB == nil {
+		lbServerPort := p.lbServerPort
+		if lbServerPort != 0 {
+			lbServerPort = lbServerPort - 1
+		}
+		lb, err := loadbalancer.New(ctx, p.dataDir, loadbalancer.APIServerServiceName, p.apiServerURL, lbServerPort)
 		if err != nil {
 			return err
 		}
@@ -130,4 +148,8 @@ func (p *proxy) SupervisorAddresses() []string {
 
 func (p *proxy) APIServerURL() string {
 	return p.apiServerURL
+}
+
+func (p *proxy) IsAPIServerLBEnabled() bool {
+	return p.apiServerLB != nil
 }

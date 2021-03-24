@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	net2 "net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/k3s-io/helm-controller/pkg/helm"
 	"github.com/pkg/errors"
+	"github.com/rancher/k3s/pkg/apiaddresses"
 	"github.com/rancher/k3s/pkg/clientaccess"
 	"github.com/rancher/k3s/pkg/daemons/config"
 	"github.com/rancher/k3s/pkg/daemons/control"
@@ -40,9 +42,10 @@ import (
 const (
 	MasterRoleLabelKey       = "node-role.kubernetes.io/master"
 	ControlPlaneRoleLabelKey = "node-role.kubernetes.io/control-plane"
+	ETCDRoleLabelKey         = "node-role.kubernetes.io/etcd"
 )
 
-func resolveDataDir(dataDir string) (string, error) {
+func ResolveDataDir(dataDir string) (string, error) {
 	dataDir, err := datadir.Resolve(dataDir)
 	return filepath.Join(dataDir, "server"), err
 }
@@ -60,9 +63,13 @@ func StartServer(ctx context.Context, config *Config) error {
 		return errors.Wrap(err, "starting kubernetes")
 	}
 
-	config.ControlConfig.Runtime.Handler = router(&config.ControlConfig)
+	config.ControlConfig.Runtime.Handler = router(ctx, config)
 
-	go startOnAPIServerReady(ctx, config)
+	if config.ControlConfig.DisableAPIServer {
+		go setETCDLabelsAndAnnotations(ctx, config)
+	} else {
+		go startOnAPIServerReady(ctx, config)
+	}
 
 	for _, hook := range config.StartupHooks {
 		if err := hook(ctx, config.ControlConfig.Runtime.APIServerReady, config.ControlConfig.Runtime.KubeConfigAdmin); err != nil {
@@ -137,9 +144,8 @@ func runControllers(ctx context.Context, config *Config) error {
 			panic(err)
 		}
 	}
-	if !config.DisableAgent {
-		go setControlPlaneRoleLabel(ctx, sc.Core.Core().V1().Node())
-	}
+
+	go setControlPlaneRoleLabel(ctx, sc.Core.Core().V1().Node(), config)
 
 	go setClusterDNSConfig(ctx, config, sc.Core.Core().V1().ConfigMap())
 
@@ -185,6 +191,10 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		return err
 	}
 
+	if err := apiaddresses.Register(ctx, config.ControlConfig.Runtime, sc.Core.Core().V1().Endpoints()); err != nil {
+		return err
+	}
+
 	if config.Rootless {
 		return rootlessports.Register(ctx, sc.Core.Core().V1().Service(), !config.DisableServiceLB, config.ControlConfig.HTTPSPort)
 	}
@@ -197,7 +207,6 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 	if err := static.Stage(dataDir); err != nil {
 		return err
 	}
-
 	dataDir = filepath.Join(controlConfig.DataDir, "manifests")
 	templateVars := map[string]string{
 		"%{CLUSTER_DNS}%":                controlConfig.ClusterDNS.String(),
@@ -205,11 +214,33 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{DEFAULT_LOCAL_STORAGE_PATH}%": controlConfig.DefaultLocalStoragePath,
 	}
 
-	if err := deploy.Stage(dataDir, templateVars, controlConfig.Skips); err != nil {
+	skip := controlConfig.Skips
+	if !skip["traefik"] && isHelmChartTraefikV1(sc) {
+		logrus.Warn("Skipping Traefik v2 deployment due to existing Traefik v1 installation")
+		skip["traefik"] = true
+	}
+	if err := deploy.Stage(dataDir, templateVars, skip); err != nil {
 		return err
 	}
 
 	return deploy.WatchFiles(ctx, sc.Apply, sc.K3s.K3s().V1().Addon(), controlConfig.Disables, dataDir)
+}
+
+// isHelmChartTraefikV1 checks for an existing HelmChart resource with spec.chart containing traefik-1,
+// as deployed by the legacy chart (https://%{KUBERNETES_API}%/static/charts/traefik-1.81.0.tgz)
+func isHelmChartTraefikV1(sc *Context) bool {
+	prefix := "traefik-1."
+	helmChart, err := sc.Helm.Helm().V1().HelmChart().Get(metav1.NamespaceSystem, "traefik", metav1.GetOptions{})
+	if err != nil {
+		logrus.WithError(err).Info("Failed to get existing traefik HelmChart")
+		return false
+	}
+	chart := path.Base(helmChart.Spec.Chart)
+	if strings.HasPrefix(chart, prefix) {
+		logrus.WithField("chart", chart).Info("Found existing traefik v1 HelmChart")
+		return true
+	}
+	return false
 }
 
 func HomeKubeConfig(write, rootless bool) (string, error) {
@@ -322,7 +353,7 @@ func setupDataDirAndChdir(config *config.Control) error {
 		err error
 	)
 
-	config.DataDir, err = resolveDataDir(config.DataDir)
+	config.DataDir, err = ResolveDataDir(config.DataDir)
 	if err != nil {
 		return err
 	}
@@ -393,8 +424,8 @@ func setNoProxyEnv(config *config.Control) error {
 	envList = append(envList,
 		".svc",
 		"."+config.ClusterDomain,
-		config.ClusterIPRange.String(),
-		config.ServiceIPRange.String(),
+		config.ClusterIPRanges.String(),
+		config.ServiceIPRanges.String(),
 	)
 	os.Unsetenv("no_proxy")
 	return os.Setenv("NO_PROXY", strings.Join(envList, ","))
@@ -420,7 +451,10 @@ func isSymlink(config string) bool {
 	return false
 }
 
-func setControlPlaneRoleLabel(ctx context.Context, nodes v1.NodeClient) error {
+func setControlPlaneRoleLabel(ctx context.Context, nodes v1.NodeClient, config *Config) error {
+	if config.DisableAgent || config.ControlConfig.DisableAPIServer {
+		return nil
+	}
 	for {
 		nodeName := os.Getenv("NODE_NAME")
 		if nodeName == "" {
@@ -434,7 +468,15 @@ func setControlPlaneRoleLabel(ctx context.Context, nodes v1.NodeClient) error {
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		if v, ok := node.Labels[ControlPlaneRoleLabelKey]; ok && v == "true" {
+		// remove etcd label if etcd is disabled
+		var etcdRoleLabelExists bool
+		if config.ControlConfig.DisableETCD {
+			if _, ok := node.Labels[ETCDRoleLabelKey]; ok {
+				delete(node.Labels, ETCDRoleLabelKey)
+				etcdRoleLabelExists = true
+			}
+		}
+		if v, ok := node.Labels[ControlPlaneRoleLabelKey]; ok && v == "true" && !etcdRoleLabelExists {
 			break
 		}
 		if node.Labels == nil {
@@ -442,6 +484,7 @@ func setControlPlaneRoleLabel(ctx context.Context, nodes v1.NodeClient) error {
 		}
 		node.Labels[ControlPlaneRoleLabelKey] = "true"
 		node.Labels[MasterRoleLabelKey] = "true"
+
 		_, err = nodes.Update(node)
 		if err == nil {
 			logrus.Infof("Control-plane role label has been set successfully on node: %s", nodeName)

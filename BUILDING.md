@@ -1,4 +1,4 @@
-See the [release](https://github.com/rancher/k3s/releases/latest) page for pre-built releases.
+See the [release](https://github.com/k3s-io/k3s/releases/latest) page for pre-built releases.
 
 The clone will be much faster on this repo if you do
 ```bash
@@ -20,7 +20,7 @@ To build the binaries using without running linting (ie; if you have uncommitted
 SKIP_VALIDATE=true make
 ```
 
-If you make any changes to go.mod and want to update the vendored modules, you should run the following before runnining `make`:
+If you make any changes to go.mod and want to update the vendored modules, you should run the following before running `make`:
 ```bash
 go mod vendor && go mod tidy
 ```

@@ -14,11 +14,14 @@ type Agent struct {
 	TokenFile                string
 	ClusterSecret            string
 	ServerURL                string
+	APIAddressCh             chan string
 	DisableLoadBalancer      bool
+	ETCDAgent                bool
+	LBServerPort             int
 	ResolvConf               string
 	DataDir                  string
-	NodeIP                   string
-	NodeExternalIP           string
+	NodeIPs                  []string
+	NodeExternalIPs          []string
 	NodeName                 string
 	PauseImage               string
 	Snapshotter              string
@@ -33,12 +36,13 @@ type Agent struct {
 	WithNodeID               bool
 	EnableSELinux            bool
 	ProtectKernelDefaults    bool
+	PrivateRegistry          string
+	AirgapExtraRegistry      cli.StringSlice
+	ExtraKubeletArgs         cli.StringSlice
+	ExtraKubeProxyArgs       cli.StringSlice
+	Labels                   cli.StringSlice
+	Taints                   cli.StringSlice
 	AgentShared
-	ExtraKubeletArgs   cli.StringSlice
-	ExtraKubeProxyArgs cli.StringSlice
-	Labels             cli.StringSlice
-	Taints             cli.StringSlice
-	PrivateRegistry    string
 }
 
 type AgentShared struct {
@@ -48,15 +52,13 @@ type AgentShared struct {
 var (
 	appName     = filepath.Base(os.Args[0])
 	AgentConfig Agent
-	NodeIPFlag  = cli.StringFlag{
-		Name:        "node-ip,i",
-		Usage:       "(agent/networking) IP address to advertise for node",
-		Destination: &AgentConfig.NodeIP,
+	NodeIPFlag  = cli.StringSliceFlag{
+		Name:  "node-ip,i",
+		Usage: "(agent/networking) IP address to advertise for node",
 	}
-	NodeExternalIPFlag = cli.StringFlag{
-		Name:        "node-external-ip",
-		Usage:       "(agent/networking) External IP address to advertise for node",
-		Destination: &AgentConfig.NodeExternalIP,
+	NodeExternalIPFlag = cli.StringSliceFlag{
+		Name:  "node-external-ip",
+		Usage: "(agent/networking) External IP address to advertise for node",
 	}
 	NodeNameFlag = cli.StringFlag{
 		Name:        "node-name",
@@ -84,6 +86,12 @@ var (
 		Usage:       "(agent/runtime) Private registry configuration file",
 		Destination: &AgentConfig.PrivateRegistry,
 		Value:       "/etc/rancher/" + version.Program + "/registries.yaml",
+	}
+	AirgapExtraRegistryFlag = cli.StringSliceFlag{
+		Name:   "airgap-extra-registry",
+		Usage:  "(agent/runtime) Additional registry to tag airgap images as being sourced from",
+		Value:  &AgentConfig.AirgapExtraRegistry,
+		Hidden: true,
 	}
 	PauseImageFlag = cli.StringFlag{
 		Name:        "pause-image",
@@ -155,6 +163,14 @@ var (
 		Destination: &AgentConfig.EnableSELinux,
 		EnvVar:      version.ProgramUpper + "_SELINUX",
 	}
+	LBServerPortFlag = cli.IntFlag{
+		Name:        "lb-server-port",
+		Usage:       "(agent/node) Local port for supervisor client load-balancer. If the supervisor and apiserver are not colocated an additional port 1 less than this port will also be used for the apiserver client load-balancer.",
+		Hidden:      false,
+		Destination: &AgentConfig.LBServerPort,
+		EnvVar:      version.ProgramUpper + "_LB_SERVER_PORT",
+		Value:       6444,
+	}
 )
 
 func CheckSELinuxFlags(ctx *cli.Context) error {
@@ -172,8 +188,12 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 		Name:      "agent",
 		Usage:     "Run node agent",
 		UsageText: appName + " agent [OPTIONS]",
-		Before:    SetupDebug(CheckSELinuxFlags),
-		Action:    action,
+		Before: func(c *cli.Context) error {
+			AgentConfig.NodeExternalIPs = c.StringSlice("node-external-ip")
+			AgentConfig.NodeIPs = c.StringSlice("node-ip")
+			return SetupDebug(CheckSELinuxFlags)(c)
+		},
+		Action: action,
 		Flags: []cli.Flag{
 			ConfigFlag,
 			DebugFlag,
@@ -214,6 +234,7 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			PauseImageFlag,
 			SnapshotterFlag,
 			PrivateRegistryFlag,
+			AirgapExtraRegistryFlag,
 			NodeIPFlag,
 			NodeExternalIPFlag,
 			ResolvConfFlag,
@@ -228,6 +249,7 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 				Destination: &AgentConfig.Rootless,
 			},
 			&SELinuxFlag,
+			LBServerPortFlag,
 
 			// Deprecated/hidden below
 

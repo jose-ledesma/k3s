@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,12 +35,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/controller-manager/app"
 )
 
 var (
-	InternalIPLabel = version.Program + ".io/internal-ip"
-	ExternalIPLabel = version.Program + ".io/external-ip"
-	HostnameLabel   = version.Program + ".io/hostname"
+	InternalIPAnnotation = version.Program + ".io/internal-ip"
+	ExternalIPAnnotation = version.Program + ".io/external-ip"
+	HostnameAnnotation   = version.Program + ".io/hostname"
 )
 
 const (
@@ -89,12 +91,7 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 			return err
 		}
 	}
-
-	if err := tunnel.Setup(ctx, nodeConfig, proxy); err != nil {
-		return err
-	}
-
-	if err := agent.Agent(&nodeConfig.AgentConfig); err != nil {
+	if err := setupTunnelAndRunAgent(ctx, nodeConfig, cfg, proxy); err != nil {
 		return err
 	}
 
@@ -102,6 +99,9 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	if err != nil {
 		return err
 	}
+
+	app.WaitForAPIServer(coreClient, 30*time.Second)
+
 	if !nodeConfig.NoFlannel {
 		if err := flannel.Run(ctx, nodeConfig, coreClient.CoreV1().Nodes()); err != nil {
 			return err
@@ -148,7 +148,7 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 		return err
 	}
 
-	proxy, err := proxy.NewAPIProxy(!cfg.DisableLoadBalancer, agentDir, cfg.ServerURL)
+	proxy, err := proxy.NewSupervisorProxy(ctx, !cfg.DisableLoadBalancer, agentDir, cfg.ServerURL, cfg.LBServerPort)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,6 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 		cfg.Token = newToken.String()
 		break
 	}
-
 	systemd.SdNotify(true, "READY=1\n")
 	return run(ctx, cfg, proxy)
 }
@@ -213,7 +212,7 @@ func validateCgroupsV2() error {
 	}
 	for _, controller := range []string{"cpu", "cpuset", "memory"} {
 		if _, ok := m[controller]; !ok {
-			return fmt.Errorf("faild to find %s cgroup (v2)", controller)
+			return fmt.Errorf("failed to find %s cgroup (v2)", controller)
 		}
 	}
 	return nil
@@ -234,17 +233,16 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes v
 
 		newLabels, updateMutables := updateMutableLabels(agentConfig, node.Labels)
 
-		updateAddresses := !agentConfig.DisableCCM
-		if updateAddresses {
-			newLabels, updateAddresses = updateAddressLabels(agentConfig, newLabels)
-		}
+		updateLabels := !agentConfig.DisableCCM
+		newAnnotations, updateAddresses := updateAddressAnnotations(agentConfig, node.Annotations)
 
 		// inject node config
 		updateNode, err := nodeconfig.SetNodeConfigAnnotations(node)
 		if err != nil {
 			return err
 		}
-		if updateAddresses || updateMutables {
+		if updateAddresses || updateMutables || updateLabels {
+			node.Annotations = newAnnotations
 			node.Labels = newLabels
 			updateNode = true
 		}
@@ -258,9 +256,10 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes v
 					continue
 				}
 			}
-			logrus.Infof("labels have been set successfully on node: %s", agentConfig.NodeName)
+			logrus.Infof("annotations and labels have been set successfully on node: %s", agentConfig.NodeName)
+			logrus.Infof("new annotations: %v", node.Annotations)
 		} else {
-			logrus.Infof("labels have already set on node: %s", agentConfig.NodeName)
+			logrus.Infof("annotations and labels have already set on node: %s", agentConfig.NodeName)
 		}
 
 		break
@@ -287,16 +286,57 @@ func updateMutableLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]
 	return result, !equality.Semantic.DeepEqual(nodeLabels, result)
 }
 
-func updateAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]string) (map[string]string, bool) {
+func updateAddressAnnotations(agentConfig *daemonconfig.Agent, nodeAnnotations map[string]string) (map[string]string, bool) {
 	result := map[string]string{
-		InternalIPLabel: agentConfig.NodeIP,
-		HostnameLabel:   agentConfig.NodeName,
+		InternalIPAnnotation: strings.Join(agentConfig.NodeIPs, ","),
+		HostnameAnnotation:   agentConfig.NodeName,
 	}
 
-	if agentConfig.NodeExternalIP != "" {
-		result[ExternalIPLabel] = agentConfig.NodeExternalIP
+	if len(agentConfig.NodeExternalIPs) > 0 {
+		result[ExternalIPAnnotation] = strings.Join(agentConfig.NodeExternalIPs, ",")
 	}
 
-	result = labels.Merge(nodeLabels, result)
-	return result, !equality.Semantic.DeepEqual(nodeLabels, result)
+	for k, v := range nodeAnnotations {
+		if _, ok := result[k]; !ok {
+			result[k] = v
+		}
+	}
+
+	return result, !equality.Semantic.DeepEqual(nodeAnnotations, result)
+}
+
+// setupTunnelAndRunAgent should start the setup tunnel before starting kubelet and kubeproxy
+// there are special case for etcd agents, it will wait until it can find the apiaddress from
+// the address channel and update the proxy with the servers addresses, if in rke2 we need to
+// start the agent before the tunnel is setup to allow kubelet to start first and start the pods
+func setupTunnelAndRunAgent(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agent, proxy proxy.Proxy) error {
+	var agentRan bool
+	if cfg.ETCDAgent {
+		// only in rke2 run the agent before the tunnel setup and check for that later in the function
+		if proxy.IsAPIServerLBEnabled() {
+			if err := agent.Agent(&nodeConfig.AgentConfig); err != nil {
+				return err
+			}
+			agentRan = true
+		}
+		select {
+		case address := <-cfg.APIAddressCh:
+			cfg.ServerURL = address
+			u, err := url.Parse(cfg.ServerURL)
+			if err != nil {
+				logrus.Warn(err)
+			}
+			proxy.Update([]string{fmt.Sprintf("%s:%d", u.Hostname(), nodeConfig.ServerHTTPSPort)})
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	if err := tunnel.Setup(ctx, nodeConfig, proxy); err != nil {
+		return err
+	}
+	if !agentRan {
+		return agent.Agent(&nodeConfig.AgentConfig)
+	}
+	return nil
 }

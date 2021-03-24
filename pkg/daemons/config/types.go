@@ -11,6 +11,7 @@ import (
 
 	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
 
@@ -37,6 +38,7 @@ type Node struct {
 	AgentConfig              Agent
 	CACerts                  []byte
 	Certificate              *tls.Certificate
+	ServerHTTPSPort          int
 }
 
 type Containerd struct {
@@ -50,13 +52,17 @@ type Containerd struct {
 	SELinux  bool
 }
 
+type NetIPNets []*net.IPNet
+
 type Agent struct {
 	PodManifests            string
 	NodeName                string
 	NodeConfigPath          string
 	ServingKubeletCert      string
 	ServingKubeletKey       string
-	ClusterCIDR             net.IPNet
+	ServiceCIDRs            NetIPNets
+	ServiceNodePortRange    utilnet.PortRange
+	ClusterCIDRs            NetIPNets
 	ClusterDNS              net.IP
 	ClusterDomain           string
 	ResolvConf              string
@@ -64,8 +70,8 @@ type Agent struct {
 	KubeConfigKubelet       string
 	KubeConfigKubeProxy     string
 	KubeConfigK3sController string
-	NodeIP                  string
-	NodeExternalIP          string
+	NodeIPs                 []string
+	NodeExternalIPs         []string
 	RuntimeSocket           string
 	ListenAddress           string
 	ClientCA                string
@@ -81,6 +87,7 @@ type Agent struct {
 	IPSECPSK                string
 	StrongSwanDir           string
 	PrivateRegistry         string
+	AirgapExtraRegistry     []string
 	DisableCCM              bool
 	DisableNPC              bool
 	DisableKubeProxy        bool
@@ -100,8 +107,9 @@ type Control struct {
 	APIServerBindAddress     string
 	AgentToken               string `json:"-"`
 	Token                    string `json:"-"`
-	ClusterIPRange           *net.IPNet
-	ServiceIPRange           *net.IPNet
+	ClusterIPRanges          NetIPNets
+	ServiceIPRanges          NetIPNets
+	ServiceNodePortRange     *utilnet.PortRange
 	ClusterDNS               net.IP
 	ClusterDomain            string
 	NoCoreDNS                bool
@@ -111,7 +119,6 @@ type Control struct {
 	Skips                    map[string]bool
 	Disables                 map[string]bool
 	Datastore                endpoint.Config
-	NoScheduler              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
 	ExtraCloudControllerArgs []string
@@ -124,16 +131,31 @@ type Control struct {
 	DisableCCM               bool
 	DisableNPC               bool
 	DisableKubeProxy         bool
+	DisableAPIServer         bool
+	DisableControllerManager bool
+	DisableScheduler         bool
+	DisableETCD              bool
 	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
 	TLSMinVersion            uint16
 	TLSCipherSuites          []uint16
+	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
+	EtcdExposeMetrics        bool
 	EtcdSnapshotDir          string
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
+	EtcdS3                   bool
+	EtcdS3Endpoint           string
+	EtcdS3EndpointCA         string
+	EtcdS3SkipSSLVerify      bool
+	EtcdS3AccessKey          string
+	EtcdS3SecretKey          string
+	EtcdS3BucketName         string
+	EtcdS3Region             string
+	EtcdS3Folder             string
 
 	BindAddress string
 	SANs        []string
@@ -242,4 +264,12 @@ func GetArgsList(argsMap map[string]string, extraArgs []string) []string {
 	}
 	sort.Strings(args)
 	return args
+}
+
+func (ipNets NetIPNets) String() string {
+	ranges := make([]string, len(ipNets))
+	for i, nets := range ipNets {
+		ranges[i] = nets.String()
+	}
+	return strings.Join(ranges, ",")
 }

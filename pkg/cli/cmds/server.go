@@ -10,18 +10,20 @@ import (
 const (
 	defaultSnapshotRentention    = 5
 	defaultSnapshotIntervalHours = 12
+	hideClusterFlags             = true
 )
 
 type Server struct {
-	ClusterCIDR    string
-	AgentToken     string
-	AgentTokenFile string
-	Token          string
-	TokenFile      string
-	ClusterSecret  string
-	ServiceCIDR    string
-	ClusterDNS     string
-	ClusterDomain  string
+	ClusterCIDR          string
+	AgentToken           string
+	AgentTokenFile       string
+	Token                string
+	TokenFile            string
+	ClusterSecret        string
+	ServiceCIDR          string
+	ServiceNodePortRange string
+	ClusterDNS           string
+	ClusterDomain        string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
 	// The port which custom k3s API runs on
@@ -53,15 +55,29 @@ type Server struct {
 	DisableCCM               bool
 	DisableNPC               bool
 	DisableKubeProxy         bool
+	DisableAPIServer         bool
+	DisableControllerManager bool
+	DisableETCD              bool
 	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
 	StartupHooks             []func(context.Context, <-chan struct{}, string) error
+	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
+	EtcdExposeMetrics        bool
 	EtcdSnapshotDir          string
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
+	EtcdS3                   bool
+	EtcdS3Endpoint           string
+	EtcdS3EndpointCA         string
+	EtcdS3SkipSSLVerify      bool
+	EtcdS3AccessKey          string
+	EtcdS3SecretKey          string
+	EtcdS3BucketName         string
+	EtcdS3Region             string
+	EtcdS3Folder             string
 }
 
 var ServerConfig Server
@@ -71,8 +87,12 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 		Name:      "server",
 		Usage:     "Run management server",
 		UsageText: appName + " server [OPTIONS]",
-		Before:    SetupDebug(CheckSELinuxFlags),
-		Action:    action,
+		Before: func(c *cli.Context) error {
+			AgentConfig.NodeExternalIPs = c.StringSlice("node-external-ip")
+			AgentConfig.NodeIPs = c.StringSlice("node-ip")
+			return SetupDebug(CheckSELinuxFlags)(c)
+		},
+		Action: action,
 		Flags: []cli.Flag{
 			ConfigFlag,
 			DebugFlag,
@@ -122,6 +142,12 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(networking) Network CIDR to use for services IPs",
 				Destination: &ServerConfig.ServiceCIDR,
 				Value:       "10.43.0.0/16",
+			},
+			cli.StringFlag{
+				Name:        "service-node-port-range",
+				Usage:       "(networking) Port range to reserve for services with NodePort visibility",
+				Destination: &ServerConfig.ServiceNodePortRange,
+				Value:       "30000-32767",
 			},
 			cli.StringFlag{
 				Name:        "cluster-dns",
@@ -210,9 +236,20 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				EnvVar:      version.ProgramUpper + "_DATASTORE_KEYFILE",
 			},
 			&cli.BoolFlag{
+				Name:        "etcd-expose-metrics",
+				Usage:       "(db) Expose etcd metrics to client interface. (Default false)",
+				Destination: &ServerConfig.EtcdExposeMetrics,
+			},
+			&cli.BoolFlag{
 				Name:        "etcd-disable-snapshots",
 				Usage:       "(db) Disable automatic etcd snapshots",
 				Destination: &ServerConfig.EtcdDisableSnapshots,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-snapshot-name",
+				Usage:       "(db) Set the base name of etcd snapshots. Default: etcd-snapshot-<unix-timestamp>",
+				Destination: &ServerConfig.EtcdSnapshotName,
+				Value:       "etcd-snapshot",
 			},
 			&cli.StringFlag{
 				Name:        "etcd-snapshot-schedule-cron",
@@ -230,6 +267,55 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Name:        "etcd-snapshot-dir",
 				Usage:       "(db) Directory to save db snapshots. (Default location: ${data-dir}/db/snapshots)",
 				Destination: &ServerConfig.EtcdSnapshotDir,
+			},
+			&cli.BoolFlag{
+				Name:        "etcd-s3",
+				Usage:       "(db) Enable backup to S3",
+				Destination: &ServerConfig.EtcdS3,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-endpoint",
+				Usage:       "(db) S3 endpoint url",
+				Destination: &ServerConfig.EtcdS3Endpoint,
+				Value:       "s3.amazonaws.com",
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-endpoint-ca",
+				Usage:       "(db) S3 custom CA cert to connect to S3 endpoint",
+				Destination: &ServerConfig.EtcdS3EndpointCA,
+			},
+			&cli.BoolFlag{
+				Name:        "etcd-s3-skip-ssl-verify",
+				Usage:       "(db) Disables S3 SSL certificate validation",
+				Destination: &ServerConfig.EtcdS3SkipSSLVerify,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-access-key",
+				Usage:       "(db) S3 access key",
+				EnvVar:      "AWS_ACCESS_KEY_ID",
+				Destination: &ServerConfig.EtcdS3AccessKey,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-secret-key",
+				Usage:       "(db) S3 secret key",
+				EnvVar:      "AWS_SECRET_ACCESS_KEY",
+				Destination: &ServerConfig.EtcdS3SecretKey,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-bucket",
+				Usage:       "(db) S3 bucket name",
+				Destination: &ServerConfig.EtcdS3BucketName,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-region",
+				Usage:       "(db) S3 region / bucket location (optional)",
+				Destination: &ServerConfig.EtcdS3Region,
+				Value:       "us-east-1",
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-folder",
+				Usage:       "(db) S3 folder",
+				Destination: &ServerConfig.EtcdS3Folder,
 			},
 			cli.StringFlag{
 				Name:        "default-local-storage-path",
@@ -260,6 +346,21 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(components) Disable " + version.Program + " default network policy controller",
 				Destination: &ServerConfig.DisableNPC,
 			},
+			cli.BoolFlag{
+				Name:        "disable-api-server",
+				Usage:       "(experimental/components) Disable running api server",
+				Destination: &ServerConfig.DisableAPIServer,
+			},
+			cli.BoolFlag{
+				Name:        "disable-controller-manager",
+				Usage:       "(experimental/components) Disable running kube-controller-manager",
+				Destination: &ServerConfig.DisableControllerManager,
+			},
+			cli.BoolFlag{
+				Name:        "disable-etcd",
+				Usage:       "(experimental/components) Disable running etcd",
+				Destination: &ServerConfig.DisableETCD,
+			},
 			NodeNameFlag,
 			WithNodeIDFlag,
 			NodeLabels,
@@ -269,6 +370,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			PauseImageFlag,
 			SnapshotterFlag,
 			PrivateRegistryFlag,
+			AirgapExtraRegistryFlag,
 			NodeIPFlag,
 			NodeExternalIPFlag,
 			ResolvConfFlag,
@@ -304,7 +406,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			cli.BoolFlag{
 				Name:        "cluster-init",
 				Hidden:      hideClusterFlags,
-				Usage:       "(experimental/cluster) Initialize a new cluster",
+				Usage:       "(experimental/cluster) Initialize a new cluster using embedded Etcd",
 				EnvVar:      version.ProgramUpper + "_CLUSTER_INIT",
 				Destination: &ServerConfig.ClusterInit,
 			},
@@ -326,6 +428,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Destination: &ServerConfig.EncryptSecrets,
 			},
 			&SELinuxFlag,
+			LBServerPortFlag,
 
 			// Hidden/Deprecated flags below
 

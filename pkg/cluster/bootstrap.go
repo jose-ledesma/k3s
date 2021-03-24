@@ -9,12 +9,13 @@ import (
 
 	"github.com/rancher/k3s/pkg/bootstrap"
 	"github.com/rancher/k3s/pkg/clientaccess"
+	"github.com/rancher/k3s/pkg/daemons/config"
 	"github.com/rancher/k3s/pkg/version"
 	"github.com/sirupsen/logrus"
 )
 
 // Bootstrap attempts to load a managed database driver, if one has been initialized or should be created/joined.
-// It then checks to see if the cluster needs to load boostrap data, and if so, loads data into the
+// It then checks to see if the cluster needs to load bootstrap data, and if so, loads data into the
 // ControlRuntimeBoostrap struct, either via HTTP or from the datastore.
 func (c *Cluster) Bootstrap(ctx context.Context) error {
 	if err := c.assignManagedDriver(ctx); err != nil {
@@ -120,7 +121,7 @@ func (c *Cluster) bootstrapped() error {
 // and loads it into the ControlRuntimeBootstrap struct. Unlike the storage bootstrap path,
 // this data does not need to be decrypted since it is generated on-demand by an existing server.
 func (c *Cluster) httpBootstrap() error {
-	content, err := clientaccess.Get("/v1-"+version.Program+"/server-bootstrap", c.clientAccessInfo)
+	content, err := c.clientAccessInfo.Get("/v1-" + version.Program + "/server-bootstrap")
 	if err != nil {
 		return err
 	}
@@ -146,4 +147,13 @@ func (c *Cluster) bootstrap(ctx context.Context) error {
 // We hash the token value exactly as it is provided by the user, NOT the normalized version.
 func (c *Cluster) bootstrapStamp() string {
 	return filepath.Join(c.config.DataDir, "db/joined-"+keyHash(c.config.Token))
+}
+
+// Snapshot is a proxy method to call the snapshot method on the managedb
+// interface for etcd clusters.
+func (c *Cluster) Snapshot(ctx context.Context, config *config.Control) error {
+	if c.managedDB == nil {
+		return errors.New("unable to perform etcd snapshot on non-etcd system")
+	}
+	return c.managedDB.Snapshot(ctx, config)
 }
